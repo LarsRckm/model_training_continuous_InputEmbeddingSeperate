@@ -162,16 +162,22 @@ def train_model_TimeSeries_paper(config):
             prediction = proj_output.view(-1, vocab_size)                   #(batch,seq_len, 1) --> (batch * seq_len, tgt_vocab_size)
             lossCE = loss_fn(prediction, groundTruth)                         #calculate cross-entropy-loss
             
-            _, prediction_indices = torch.max(proj_output,2)
-            prediction_indices = prediction_indices.to(device)
-            # prediction_indices[prediction_indices > vocab_size] = 0.0
-            prediction = i2v[prediction_indices].to(device)
-            prediction = prediction * div_term.unsqueeze(-1) + min_value.unsqueeze(-1)
-            prediction_grad = prediction[:,1:] - prediction[:,:-1]
+            # _, prediction_indices = torch.max(proj_output,2)
+            # prediction_indices = prediction_indices.to(device)
+            # # prediction_indices[prediction_indices > vocab_size] = 0.0
+            # prediction = i2v[prediction_indices].to(device)
+            # prediction = prediction * div_term.unsqueeze(-1) + min_value.unsqueeze(-1)
+            # prediction_grad = prediction[:,1:] - prediction[:,:-1]
+            probs = torch.softmax(proj_output, dim=-1)     # (B,S,V)
+
+            # i2v_values: (V,) oder (V,1) als float tensor auf device
+            # Erwartungswert: pred_value[b,s] = sum_v probs[b,s,v] * i2v_values[v]
+            pred_value = (probs * i2v.view(1,1,-1)).sum(dim=-1)   # (B,S)
+
+            pred_value = pred_value * div_term.unsqueeze(-1) + min_value.unsqueeze(-1)
+            prediction_grad = pred_value[:, 1:] - pred_value[:, :-1]
 
             groundTruth = batch["groundTruth"].to(device)
-            # groundTruth[groundTruth > vocab_size] = 0.0 
-            # groundTruth = i2v[groundTruth]
             groundTruth = groundTruth * div_term.unsqueeze(-1) + min_value.unsqueeze(-1)
             groundTruth_grad = groundTruth[:,1:] - groundTruth[:,:-1]
 
