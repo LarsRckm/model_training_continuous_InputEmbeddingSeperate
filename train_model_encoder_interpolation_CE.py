@@ -204,11 +204,11 @@ def train_model_TimeSeries_paper(config):
             # Erwartungswert: pred_value[b,s] = sum_v probs[b,s,v] * i2v_values[v]
             pred_value = (probs * i2v.view(1,1,-1)).sum(dim=-1)   # (B,S)
 
-            # pred_value = pred_value * div_term.unsqueeze(-1) + min_value.unsqueeze(-1)
+            pred_value = pred_value * div_term.unsqueeze(-1) + min_value.unsqueeze(-1)
             prediction_grad = pred_value[:, 1:] - pred_value[:, :-1]
 
             groundTruth = batch["groundTruth"].to(device)
-            # groundTruth = groundTruth * div_term.unsqueeze(-1) + min_value.unsqueeze(-1)
+            groundTruth = groundTruth * div_term.unsqueeze(-1) + min_value.unsqueeze(-1)
             groundTruth_grad = groundTruth[:,1:] - groundTruth[:,:-1]
 
             lossGradient = loss_grad(prediction_grad, groundTruth_grad)
