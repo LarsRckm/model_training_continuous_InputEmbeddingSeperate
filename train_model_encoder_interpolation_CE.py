@@ -79,6 +79,21 @@ def greedy_decode_timeSeries_paper(model, source: torch.Tensor, time: torch.Tens
     
     return indices
 
+
+def grad_norm(loss, model: nn.Module):
+    grads = torch.autograd.grad(
+        loss,
+        model.parameters(),
+        retain_graph=True,
+        create_graph=False,
+        allow_unused=True
+    )
+    total = 0.0
+    for g in grads:
+        if g is not None:
+            total += g.detach().pow(2).sum()
+    return total.sqrt()
+
 def train_model_TimeSeries_paper(config):
     device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
     print(f"Using device {device}")
@@ -91,7 +106,26 @@ def train_model_TimeSeries_paper(config):
     train_dataloader, val_dataloader, seq_len, vocab_size = get_ds_timeSeries(config)
     model = get_model_timeSeries(config, seq_len, vocab_size).to(device)
 
-    optimizer = torch.optim.Adam(model.parameters(), lr=config["lr"], eps=1e-9)
+    optimizer = torch.optim.Adam(model.parameters(), lr=config["lr"], eps=1e-9, weight_decay=1e-4)
+
+    total_steps = config["num_epochs"] * (config["train_count"] // config["batch_size"])
+    warmup_steps = int(0.05 * total_steps)
+
+    scheduler = torch.optim.lr_scheduler.SequentialLR(
+    optimizer,
+    schedulers=[
+        torch.optim.lr_scheduler.LinearLR(
+            optimizer, start_factor=0.01, total_iters=warmup_steps
+        ),
+        torch.optim.lr_scheduler.CosineAnnealingLR(
+            optimizer,
+            T_max=total_steps - warmup_steps,
+            eta_min=1e-6
+        )
+    ],
+    milestones=[warmup_steps]
+)
+
 
     initial_epoch = 0
     global_step = 0
@@ -163,29 +197,38 @@ def train_model_TimeSeries_paper(config):
             prediction = proj_output.view(-1, vocab_size)                   #(batch,seq_len, 1) --> (batch * seq_len, tgt_vocab_size)
             lossCE = loss_fn(prediction, groundTruth)                         #calculate cross-entropy-loss
             
-            
+
             probs = torch.softmax(proj_output, dim=-1)     # (B,S,V)
 
             # i2v_values: (V,) oder (V,1) als float tensor auf device
             # Erwartungswert: pred_value[b,s] = sum_v probs[b,s,v] * i2v_values[v]
             pred_value = (probs * i2v.view(1,1,-1)).sum(dim=-1)   # (B,S)
 
-            # pred_value = pred_value * div_term.unsqueeze(-1) + min_value.unsqueeze(-1)
+            pred_value = pred_value * div_term.unsqueeze(-1) + min_value.unsqueeze(-1)
             prediction_grad = pred_value[:, 1:] - pred_value[:, :-1]
 
             groundTruth = batch["groundTruth"].to(device)
-            # groundTruth = groundTruth * div_term.unsqueeze(-1) + min_value.unsqueeze(-1)
+            groundTruth = groundTruth * div_term.unsqueeze(-1) + min_value.unsqueeze(-1)
             groundTruth_grad = groundTruth[:,1:] - groundTruth[:,:-1]
 
             lossGradient = loss_grad(prediction_grad, groundTruth_grad)
-            loss = lossCE + config["gradient_loss_weight"] * lossGradient
+
+            g_ce   = grad_norm(lossCE, model)
+            g_grad = grad_norm(lossGradient, model)
+
+            alpha = (g_ce / (g_grad + 1e-8)).detach()
+
+            loss = lossCE + alpha * lossGradient
             batch_iterator.set_postfix({f"loss": f"{loss.item():6.5f}; lossCE: {lossCE.item():6.3f}; lossGrad: {lossGradient.item():6.3f}"})
 
             #backpropagate the loss
             loss.backward()
 
+            torch.nn.utils.clip_grad_norm_(model.parameters(), 1.0)
+
             #update the weights
             optimizer.step()
+            scheduler.step()
             optimizer.zero_grad()
 
             global_step += 1
