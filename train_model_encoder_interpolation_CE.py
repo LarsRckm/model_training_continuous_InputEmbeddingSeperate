@@ -221,10 +221,11 @@ def train_model_TimeSeries_paper(config):
             loss = lossCE + alpha * lossGradient
             batch_iterator.set_postfix({f"loss": f"{loss.item():6.5f}; lossCE: {lossCE.item():6.3f}; lossGrad: {lossGradient.item():6.3f}"})
 
+            torch.nn.utils.clip_grad_norm_(model.parameters(), 1.0)
+
             #backpropagate the loss
             loss.backward()
 
-            torch.nn.utils.clip_grad_norm_(model.parameters(), 1.0)
 
             #update the weights
             optimizer.step()
