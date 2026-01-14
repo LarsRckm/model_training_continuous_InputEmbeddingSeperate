@@ -17,7 +17,7 @@ def get_config():
         "random_number_range": ["norm",0,5],          #y-values are created randomly with normal distribution and given mean_value and std_value, alternative: ["uni", 5(lower border), 10(upper border)]
         "offset": 10,                                       #offset to the lowest and highest border of y_values
         "width_array_encoder": [10,100,10],                  #[min_width, max_width, max_count_width]
-        "batch_size": 20,                                    #train_count / batch_size = number_iteration_per_epoch
+        "batch_size": 10,                                    #train_count / batch_size = number_iteration_per_epoch
         "num_epochs": 400,                                  #max number of training epochs
         "lr": 1e-4,                                       #learning rate for Adam optimizer
         "d_model": 512,

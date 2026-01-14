@@ -24,8 +24,9 @@ class TimeSeriesDataset_Interpolation_roundedInput(Dataset):
         y_start = np.random.uniform(self.config["y_lim"][0]+1,self.config["y_lim"][1]-1)
         
         #calculate randomInt to select different time series generating functions
-        timeSeries = [0,1,2,3,4,5,6,7]
-        randomInt = choice(timeSeries)
+        # timeSeries = [0,1,2,3,4,5,6,7]
+        # randomInt = choice(timeSeries)
+        randomInt = 5
         #0: low order
         #1: low order
         #2: low order
