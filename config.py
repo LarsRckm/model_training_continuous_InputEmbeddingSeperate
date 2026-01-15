@@ -11,23 +11,23 @@ def get_config():
         "y_lim": [10,10000],                                  #range of y-values in which time series is bounded
         # "noise_std": [0,10],                             #[noise_std_min, noise_std_max], noise_std is normal distributed or uniform distributed itself, specify in create_data.py in generate_noisy_data
         "noise_std": ["norm",0,0.15], #noise std is set to be normal or uniform distributed, alternative ["uni", 0.05 meaning 0.05 * max(TimeSeries)-min(TimeSeries), 0.15 meaning 0.15 * max(TimeSeries)-min(TimeSeries)], ["norm", 0 (mean), 0.15 (std, meaning 0.15 * max(TimeSeries)-min(TimeSeries))] 
-        "dropout": 0.1,                                     #value for dropout layer in model
-        "train_count":100,                                    #number of training examples per epoch
+        "dropout": 0.01,                                     #value for dropout layer in model
+        "train_count":10000,                                    #number of training examples per epoch
         "val_count": 100,                                     #number of validation examples per epoch
         "random_number_range": ["norm",0,5],          #y-values are created randomly with normal distribution and given mean_value and std_value, alternative: ["uni", 5(lower border), 10(upper border)]
         "offset": 10,                                       #offset to the lowest and highest border of y_values
         "width_array_encoder": [10,100,10],                  #[min_width, max_width, max_count_width]
         "batch_size": 10,                                    #train_count / batch_size = number_iteration_per_epoch
         "num_epochs": 400,                                  #max number of training epochs
-        "lr": 1e-4,                                       #learning rate for Adam optimizer
+        "lr": 5e-4,                                       #learning rate for Adam optimizer
         "d_model": 512,
         "model_folder": "weights",                          #folder name to store models in
         "model_basename": "Encoder_Interpolation_Discontinuous_",
         "preload": "latest",                                #whether or not to start training with the latest trained version
         "experiment_name": "runs/tmodel",
         "label_smoothing": 0.0,
-        "loss_soft_argmax": 0.6,                           #weighting factor for soft-argmax loss
-        "loss_entropy_penalty": 0.01                          #weighting factor for entropy penalty loss
+        "loss_soft_argmax": 0.002,                           #weighting factor for soft-argmax loss
+        "loss_entropy_penalty": 0.1                          #weighting factor for entropy penalty loss
     }
 
 def get_weights_file_path(config, epoch: str):

@@ -2,6 +2,7 @@ import torch
 import torch.nn.functional as F
 import torch.nn as nn
 from torch.utils.data import DataLoader
+from torch.utils.tensorboard import SummaryWriter
 import pandas as pd
 import numpy as np
 
@@ -165,10 +166,13 @@ def train_model_TimeSeries_paper(config):
     # for k, v in i2v_dict.items():
     #     i2v[int(k)] = float(v)
 
+    #tracking loss
+    writer = SummaryWriter("results_train/my_experiment")
+    counter = 0
     
     #loss function
-    loss_fn = nn.CrossEntropyLoss(label_smoothing=config["label_smoothing"]).to(device)
-    loss_grad = nn.MSELoss().to(device)
+    # loss_fn = nn.CrossEntropyLoss(label_smoothing=config["label_smoothing"]).to(device)
+    # loss_grad = nn.MSELoss().to(device)
     soft_argmax = nn.SmoothL1Loss().to(device)
 
     for epoch in range(initial_epoch, config["num_epochs"]):
@@ -220,14 +224,14 @@ def train_model_TimeSeries_paper(config):
             #calculate gauss ce loss
             #gaussian distribution around the groundtruth token
             x = torch.ones_like(groundTruth).to(device) * torch.arange(config["vocab_size"] + 1, device=device).float().unsqueeze(0)
-            groundTruth = groundTruth * torch.ones(1, config["vocab_size"]+1, device=device).float()
-            groundTruth_probs =  1/(5*np.sqrt(2*np.pi)) * torch.exp(-0.5 * ((x - groundTruth) / 5) ** 2)
+            groundTruth_extended = groundTruth * torch.ones(1, config["vocab_size"]+1, device=device).float()
+            groundTruth_probs =  1/(5*np.sqrt(2*np.pi)) * torch.exp(-0.5 * ((x - groundTruth_extended) / 5) ** 2)
             log_p = F.log_softmax(prediction, dim=-1)
             loss_gauss_ce = -(groundTruth_probs * log_p).sum(dim=-1).mean()
 
             #calculate soft argmax
             prediction_prob = torch.softmax(prediction, dim=-1) #(B,L,V)
-            vocab_tokens = torch.arange(config["vocab_size"]) #(V)
+            vocab_tokens = torch.arange(config["vocab_size"]+1).to(device) #(V)
             prediction_token = (prediction_prob*vocab_tokens).sum(dim=-1).view(-1) #(B*L)
             loss_soft_argmax = soft_argmax(prediction_token, groundTruth)
 
@@ -238,9 +242,19 @@ def train_model_TimeSeries_paper(config):
             #total loss
             loss = loss_gauss_ce + config["loss_soft_argmax"] * loss_soft_argmax + config["loss_entropy_penalty"] * loss_entropy_penalty
 
+            #log the loss values
+            writer.add_scalar('loss/total_loss', loss.item(), counter)
+            writer.add_scalar('loss/gauss_ce_loss', loss_gauss_ce.item(), counter)
+            writer.add_scalar('loss/loss_soft_argmax', loss_soft_argmax.item(), counter)
+            writer.add_scalar('loss/loss_entropy_penalty', loss_entropy_penalty.item(), counter)
+            writer.flush()
 
-            batch_iterator.set_postfix({f"total-loss: {loss.item():6.2f}; gauss-ce-loss: {loss_gauss_ce.item():6.2f};loss_soft-argmax: {loss_soft_argmax.item():6.2f}; loss-entropy-penalty: {loss_entropy_penalty.item():6.2f}"})
-
+            batch_iterator.set_postfix({
+            "loss": f"{loss.item():6.2f}",
+            "gauss_ce": f"{loss_gauss_ce.item():6.2f}",
+            "soft_argmax": f"{loss_soft_argmax.item():6.2f}",
+            "entropy_pen": f"{loss_entropy_penalty.item():6.2f}",
+            })
 
             #backpropagate the loss
             loss.backward()
@@ -252,6 +266,7 @@ def train_model_TimeSeries_paper(config):
             optimizer.zero_grad()
 
             global_step += 1
+            counter += 1
 
 
 
