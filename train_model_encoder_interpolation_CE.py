@@ -138,7 +138,7 @@ def train_model_TimeSeries_paper(config):
         torch.optim.lr_scheduler.CosineAnnealingLR(
             optimizer,
             T_max=total_steps - warmup_steps,
-            eta_min=1e-6
+            eta_min=5e-6
         )
     ],
     milestones=[warmup_steps]
@@ -160,15 +160,16 @@ def train_model_TimeSeries_paper(config):
         global_step = state['global_step']
 
     #recalculating original numbers
-    i2v_dict = index_to_value_dict(config["vocab_size"])
-    i2v = torch.zeros(config["vocab_size"] + 1).to(device)
-    for k, v in i2v_dict.items():
-        i2v[int(k)] = float(v)
+    # i2v_dict = index_to_value_dict(config["vocab_size"])
+    # i2v = torch.zeros(config["vocab_size"] + 1).to(device)
+    # for k, v in i2v_dict.items():
+    #     i2v[int(k)] = float(v)
 
     
     #loss function
     loss_fn = nn.CrossEntropyLoss(label_smoothing=config["label_smoothing"]).to(device)
     loss_grad = nn.MSELoss().to(device)
+    soft_argmax = nn.SmoothL1Loss().to(device)
 
     for epoch in range(initial_epoch, config["num_epochs"]):
         torch.cuda.empty_cache()
@@ -216,47 +217,29 @@ def train_model_TimeSeries_paper(config):
             # lossCE = loss_fn(prediction, groundTruth)                         #calculate cross-entropy-loss
             
 
+            #calculate gauss ce loss
+            #gaussian distribution around the groundtruth token
             x = torch.ones_like(groundTruth).to(device) * torch.arange(config["vocab_size"] + 1, device=device).float().unsqueeze(0)
             groundTruth = groundTruth * torch.ones(1, config["vocab_size"]+1, device=device).float()
-            # print("groundTruth", groundTruth.shape)
-            # print("x", x.shape)
-            # print("groundTruth", groundTruth.shape)
             groundTruth_probs =  1/(5*np.sqrt(2*np.pi)) * torch.exp(-0.5 * ((x - groundTruth) / 5) ** 2)
-            # print("groundTruthprobs", groundTruth_probs.shape)
-            # print("pred NaN groundtruthprobs", torch.isnan(groundTruth_probs).any().item())
-            # groundTruth_probs = groundTruth_probs / groundTruth_probs.sum(dim=-1, keepdim=True)
-
-            # print("pred NaN", torch.isnan(prediction).any().item(),
-            #         "pred Inf", torch.isinf(prediction).any().item())
-
             log_p = F.log_softmax(prediction, dim=-1)
-            loss = -(groundTruth_probs * log_p).sum(dim=-1).mean()
+            loss_gauss_ce = -(groundTruth_probs * log_p).sum(dim=-1).mean()
+
+            #calculate soft argmax
+            prediction_prob = torch.softmax(prediction, dim=-1) #(B,L,V)
+            vocab_tokens = torch.arange(config["vocab_size"]) #(V)
+            prediction_token = (prediction_prob*vocab_tokens).sum(dim=-1).view(-1) #(B*L)
+            loss_soft_argmax = soft_argmax(prediction_token, groundTruth)
 
 
-            # i2v_values: (V,) oder (V,1) als float tensor auf device
-            # Erwartungswert: pred_value[b,s] = sum_v probs[b,s,v] * i2v_values[v]
-            # pred_value = (probs * i2v.view(1,1,-1)).sum(dim=-1)   # (B,S)
+            #calculate entropy - penalty
+            loss_entropy_penalty = - (prediction_prob * torch.log(prediction_prob + 1e-8)).sum(dim=-1).mean()
 
-            # pred_value = pred_value * div_term.unsqueeze(-1) + min_value.unsqueeze(-1)
-            # prediction_grad = pred_value[:, 1:] - pred_value[:, :-1]
+            #total loss
+            loss = loss_gauss_ce + config["loss_soft_argmax"] * loss_soft_argmax + config["loss_entropy_penalty"] * loss_entropy_penalty
 
-            # groundTruth = batch["groundTruth"].to(device)
-            # groundTruth = groundTruth * div_term.unsqueeze(-1) + min_value.unsqueeze(-1)
-            # groundTruth_grad = groundTruth[:,1:] - groundTruth[:,:-1]
 
-            # prediction_grad_norm = prediction_grad/(groundTruth_grad.abs().mean(dim=-1, keepdim=True))
-            # groundTruth_grad_norm = groundTruth_grad/(groundTruth_grad.abs().mean(dim=-1, keepdim=True))
-
-            # lossGradient = loss_grad(prediction_grad_norm, groundTruth_grad_norm)
-
-            # g_ce   = grad_norm(lossCE, model)
-            # g_grad = grad_norm(lossGradient, model)
-
-            # alpha = (g_ce / (g_grad + 1e-8)).detach()
-
-            # loss = lossCE + alpha * lossGradient
-            # loss = 
-            batch_iterator.set_postfix({f"loss": f"{loss.item():6.5f}"})
+            batch_iterator.set_postfix({f"total-loss: {loss.item():6.2f}; gauss-ce-loss: {loss_gauss_ce.item():6.2f};loss_soft-argmax: {loss_soft_argmax.item():6.2f}; loss-entropy-penalty: {loss_entropy_penalty.item():6.2f}"})
 
 
             #backpropagate the loss
