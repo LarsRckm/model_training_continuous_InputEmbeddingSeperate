@@ -26,8 +26,8 @@ def get_config():
         "preload": "latest",                                #whether or not to start training with the latest trained version
         "experiment_name": "runs/tmodel",
         "label_smoothing": 0.0,
-        "loss_soft_argmax": 0.002,                           #weighting factor for soft-argmax loss
-        "loss_entropy_penalty": 0.1                          #weighting factor for entropy penalty loss
+        "loss_w1": 0.002,                           #weighting factor for soft-argmax loss
+        "loss_entropy_penalty": 0.0                          #weighting factor for entropy penalty loss
     }
 
 def get_weights_file_path(config, epoch: str):

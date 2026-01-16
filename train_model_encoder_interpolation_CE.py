@@ -113,6 +113,23 @@ def grad_norm(loss, model: nn.Module):
             total += g.detach().pow(2).sum()
     return total.sqrt()
 
+
+def wasserstein1_cdf_loss(p: torch.Tensor, q: torch.Tensor, reduction: str = "mean") -> torch.Tensor:
+    """
+    p, q: [B, L] Wahrscheinlichkeiten (sum=1 pro Zeile), >=0
+    """
+    cdf_p = torch.cumsum(p, dim=-1)
+    cdf_q = torch.cumsum(q, dim=-1)
+    w1 = torch.sum(torch.abs(cdf_p - cdf_q), dim=-1)  # [B]
+
+    if reduction == "mean":
+        return w1.mean()
+    if reduction == "sum":
+        return w1.sum()
+    return w1  # 'none
+
+
+
 def train_model_TimeSeries_paper(config):
     device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
     print(f"Using device {device}")
@@ -173,7 +190,7 @@ def train_model_TimeSeries_paper(config):
     #loss function
     # loss_fn = nn.CrossEntropyLoss(label_smoothing=config["label_smoothing"]).to(device)
     # loss_grad = nn.MSELoss().to(device)
-    soft_argmax = nn.SmoothL1Loss().to(device)
+    # soft_argmax = nn.SmoothL1Loss().to(device)
 
     for epoch in range(initial_epoch, config["num_epochs"]):
         torch.cuda.empty_cache()
@@ -225,34 +242,41 @@ def train_model_TimeSeries_paper(config):
             #gaussian distribution around the groundtruth token
             x = torch.ones_like(groundTruth).to(device) * torch.arange(config["vocab_size"] + 1, device=device).float().unsqueeze(0)
             groundTruth_extended = groundTruth * torch.ones(1, config["vocab_size"]+1, device=device).float()
-            groundTruth_probs =  1/(5*np.sqrt(2*np.pi)) * torch.exp(-0.5 * ((x - groundTruth_extended) / 5) ** 2)
+            groundTruth_prob =  1/(5*np.sqrt(2*np.pi)) * torch.exp(-0.5 * ((x - groundTruth_extended) / 5) ** 2)
             log_p = F.log_softmax(prediction, dim=-1)
-            loss_gauss_ce = -(groundTruth_probs * log_p).sum(dim=-1).mean()
+            loss_gauss_ce = -(groundTruth_prob * log_p).sum(dim=-1).mean()
 
             #calculate soft argmax
+            # prediction_prob = torch.softmax(prediction, dim=-1) #(B,L,V)
+            # vocab_tokens = torch.arange(config["vocab_size"]+1).to(device) #(V)
+            # prediction_token = (prediction_prob*vocab_tokens).sum(dim=-1).view(-1) #(B*L)
+            # loss_soft_argmax = ((prediction_token - groundTruth.float())**2).mean()
+
+            #wasserstein loss
             prediction_prob = torch.softmax(prediction, dim=-1) #(B,L,V)
-            vocab_tokens = torch.arange(config["vocab_size"]+1).to(device) #(V)
-            prediction_token = (prediction_prob*vocab_tokens).sum(dim=-1).view(-1) #(B*L)
-            loss_soft_argmax = soft_argmax(prediction_token, groundTruth)
+            loss_w1 = wasserstein1_cdf_loss(prediction_prob, groundTruth_prob, reduction="mean")
 
 
             #calculate entropy - penalty
             loss_entropy_penalty = - (prediction_prob * torch.log(prediction_prob + 1e-8)).sum(dim=-1).mean()
 
             #total loss
-            loss = loss_gauss_ce + config["loss_soft_argmax"] * loss_soft_argmax + config["loss_entropy_penalty"] * loss_entropy_penalty
+            if(epoch < 80):
+                loss = loss_gauss_ce + config["loss_w1"] * loss_w1
+            else:
+                loss = loss_gauss_ce + config["loss_w1"] * loss_w1 + config["loss_entropy_penalty"] * loss_entropy_penalty
 
             #log the loss values
             writer.add_scalar('loss/total_loss', loss.item(), counter)
             writer.add_scalar('loss/gauss_ce_loss', loss_gauss_ce.item(), counter)
-            writer.add_scalar('loss/loss_soft_argmax', loss_soft_argmax.item(), counter)
+            writer.add_scalar('loss/w1', loss_w1.item(), counter)
             writer.add_scalar('loss/loss_entropy_penalty', loss_entropy_penalty.item(), counter)
             writer.flush()
 
             batch_iterator.set_postfix({
             "loss": f"{loss.item():6.2f}",
             "gauss_ce": f"{loss_gauss_ce.item():6.2f}",
-            "soft_argmax": f"{loss_soft_argmax.item():6.2f}",
+            "w1": f"{loss_w1.item():6.2f}",
             "entropy_pen": f"{loss_entropy_penalty.item():6.2f}",
             })
 
