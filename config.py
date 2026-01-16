@@ -19,15 +19,16 @@ def get_config():
         "width_array_encoder": [10,100,10],                  #[min_width, max_width, max_count_width]
         "batch_size": 10,                                    #train_count / batch_size = number_iteration_per_epoch
         "num_epochs": 400,                                  #max number of training epochs
-        "lr": 5e-4,                                       #learning rate for Adam optimizer
+        "lr": 1e-3,                                       #learning rate for Adam optimizer
         "d_model": 512,
         "model_folder": "weights",                          #folder name to store models in
         "model_basename": "Encoder_Interpolation_Discontinuous_",
         "preload": "latest",                                #whether or not to start training with the latest trained version
         "experiment_name": "runs/tmodel",
         "label_smoothing": 0.0,
-        "loss_w1": 0.002,                           #weighting factor for soft-argmax loss
-        "loss_entropy_penalty": 0.0                          #weighting factor for entropy penalty loss
+        "loss_w1": 1e-4,                           #weighting factor for soft-argmax loss
+        "loss_entropy_penalty": 1e-2,                          #weighting factor for entropy penalty loss
+        "groundtruth_std": 10
     }
 
 def get_weights_file_path(config, epoch: str):

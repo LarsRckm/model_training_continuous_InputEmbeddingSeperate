@@ -156,7 +156,7 @@ def train_model_TimeSeries_paper(config):
         torch.optim.lr_scheduler.CosineAnnealingLR(
             optimizer,
             T_max=total_steps - warmup_steps,
-            eta_min=5e-6
+            eta_min=1e-5
         )
     ],
     milestones=[warmup_steps]
@@ -176,6 +176,7 @@ def train_model_TimeSeries_paper(config):
         initial_epoch = state['epoch'] + 1
         optimizer.load_state_dict(state['optimizer_state_dict'])
         global_step = state['global_step']
+        scheduler.load_state_dict(state['schedulaer_state_dict'])
 
     #recalculating original numbers
     # i2v_dict = index_to_value_dict(config["vocab_size"])
@@ -203,16 +204,16 @@ def train_model_TimeSeries_paper(config):
             div_term = batch["div_term"].to(device)                                             #(Batch) --> float shape
             min_value = batch["min_value"].to(device)                                           #(Batch) --> float shape
             noise_std = batch["noise_std"]                                                    #(Batch) --> float shape
-            time = torch.linspace(0, 1, steps=1000).unsqueeze(0).to(device)
+            # time = torch.linspace(0, 1, steps=1000).unsqueeze(0).to(device)
 
 
             #apply model
             if(config["remove_parts"]):
                 #train model with interpolation purpose
-                encoder_output = model.encode(encoder_input_removed, None, time)  #(Batch, seq_len) --> (Batch, seq_len, d_model)
+                encoder_output = model.encode(encoder_input_removed, None, None)  #(Batch, seq_len) --> (Batch, seq_len, d_model)
             else:
                 #train model without interpolation purpose
-                encoder_output = model.encode(encoder_input, None, time)          #(Batch, seq_len) --> (Batch, seq_len, d_model)
+                encoder_output = model.encode(encoder_input, None, None)          #(Batch, seq_len) --> (Batch, seq_len, d_model)
 
             proj_output = model.project(encoder_output)                     #(Batch, seq_len, d_model) --> (Batch, seq_len, vocab_size)
 
@@ -242,9 +243,10 @@ def train_model_TimeSeries_paper(config):
             #gaussian distribution around the groundtruth token
             x = torch.ones_like(groundTruth).to(device) * torch.arange(config["vocab_size"] + 1, device=device).float().unsqueeze(0)
             groundTruth_extended = groundTruth * torch.ones(1, config["vocab_size"]+1, device=device).float()
-            groundTruth_prob =  1/(5*np.sqrt(2*np.pi)) * torch.exp(-0.5 * ((x - groundTruth_extended) / 5) ** 2)
+            groundTruth_prob =  1/(config["groundtruth_std"]*np.sqrt(2*np.pi)) * torch.exp(-0.5 * ((x - groundTruth_extended) / config["groundtruth_std"]) ** 2)
             log_p = F.log_softmax(prediction, dim=-1)
             loss_gauss_ce = -(groundTruth_prob * log_p).sum(dim=-1).mean()
+            grad_gauss_ce = grad_norm(loss_gauss_ce, model)
 
             #calculate soft argmax
             # prediction_prob = torch.softmax(prediction, dim=-1) #(B,L,V)
@@ -255,29 +257,42 @@ def train_model_TimeSeries_paper(config):
             #wasserstein loss
             prediction_prob = torch.softmax(prediction, dim=-1) #(B,L,V)
             loss_w1 = wasserstein1_cdf_loss(prediction_prob, groundTruth_prob, reduction="mean")
+            grad_w1 = grad_norm(loss_w1, model)
 
 
             #calculate entropy - penalty
             loss_entropy_penalty = - (prediction_prob * torch.log(prediction_prob + 1e-8)).sum(dim=-1).mean()
+            grad_entropy_penalty = grad_norm(loss_entropy_penalty, model)
 
             #total loss
-            if(epoch < 80):
+            if(epoch < 30):
                 loss = loss_gauss_ce + config["loss_w1"] * loss_w1
+                grad_loss = grad_norm(loss, model)
             else:
                 loss = loss_gauss_ce + config["loss_w1"] * loss_w1 + config["loss_entropy_penalty"] * loss_entropy_penalty
+                grad_loss = grad_norm(loss, model)
 
             #log the loss values
             writer.add_scalar('loss/total_loss', loss.item(), counter)
             writer.add_scalar('loss/gauss_ce_loss', loss_gauss_ce.item(), counter)
             writer.add_scalar('loss/w1', loss_w1.item(), counter)
             writer.add_scalar('loss/loss_entropy_penalty', loss_entropy_penalty.item(), counter)
+
+            #log gradient norms
+            writer.add_scalar('grad_norm/gauss_ce', grad_gauss_ce.item(), counter)
+            writer.add_scalar('grad_norm/w1', grad_w1.item(), counter)
+            writer.add_scalar('grad_norm/entropy_penalty', grad_entropy_penalty.item(), counter)
             writer.flush()
 
             batch_iterator.set_postfix({
             "loss": f"{loss.item():6.2f}",
+            "grad_loss": f"{grad_loss.item():6.2f}",
             "gauss_ce": f"{loss_gauss_ce.item():6.2f}",
+            "gradd_gauss_ce": f"{grad_gauss_ce.item():6.2f}",
             "w1": f"{loss_w1.item():6.2f}",
+            "grad_w1": f"{grad_w1.item():6.2f}",
             "entropy_pen": f"{loss_entropy_penalty.item():6.2f}",
+            "grad_entropy_pen": f"{grad_entropy_penalty.item():6.2f}"
             })
 
             #backpropagate the loss
@@ -315,6 +330,7 @@ def train_model_TimeSeries_paper(config):
                 "epoch": epoch,
                 "model_state_dict": model.state_dict(),
                 "optimizer_state_dict": optimizer.state_dict(),
+                "schedulaer_state_dict": scheduler.state_dict(),
                 "global_step": global_step
             }, model_filename)
    
