@@ -246,7 +246,6 @@ def train_model_TimeSeries_paper(config):
             groundTruth_prob =  1/(config["groundtruth_std"]*np.sqrt(2*np.pi)) * torch.exp(-0.5 * ((x - groundTruth_extended) / config["groundtruth_std"]) ** 2)
             log_p = F.log_softmax(prediction, dim=-1)
             loss_gauss_ce = -(groundTruth_prob * log_p).sum(dim=-1).mean()
-            grad_gauss_ce = grad_norm(loss_gauss_ce, model)
 
             #calculate soft argmax
             # prediction_prob = torch.softmax(prediction, dim=-1) #(B,L,V)
@@ -257,20 +256,21 @@ def train_model_TimeSeries_paper(config):
             #wasserstein loss
             prediction_prob = torch.softmax(prediction, dim=-1) #(B,L,V)
             loss_w1 = wasserstein1_cdf_loss(prediction_prob, groundTruth_prob, reduction="mean")
-            grad_w1 = grad_norm(loss_w1, model)
+            
 
 
             #calculate entropy - penalty
             loss_entropy_penalty = - (prediction_prob * torch.log(prediction_prob + 1e-8)).sum(dim=-1).mean()
-            grad_entropy_penalty = grad_norm(loss_entropy_penalty, model)
+            
 
             #total loss
             if(epoch < 30):
                 loss = loss_gauss_ce + config["loss_w1"] * loss_w1
-                grad_loss = grad_norm(loss, model)
             else:
                 loss = loss_gauss_ce + config["loss_w1"] * loss_w1 + config["loss_entropy_penalty"] * loss_entropy_penalty
-                grad_loss = grad_norm(loss, model)
+
+            
+
 
             #log the loss values
             writer.add_scalar('loss/total_loss', loss.item(), counter)
@@ -278,11 +278,17 @@ def train_model_TimeSeries_paper(config):
             writer.add_scalar('loss/w1', loss_w1.item(), counter)
             writer.add_scalar('loss/loss_entropy_penalty', loss_entropy_penalty.item(), counter)
 
-            #log gradient norms
-            writer.add_scalar('grad_norm/gauss_ce', grad_gauss_ce.item(), counter)
-            writer.add_scalar('grad_norm/w1', grad_w1.item(), counter)
-            writer.add_scalar('grad_norm/entropy_penalty', grad_entropy_penalty.item(), counter)
-            writer.flush()
+            if counter % 1000 == 0:
+                #calculate gradient norms
+                grad_gauss_ce = grad_norm(loss_gauss_ce, model)
+                grad_w1 = grad_norm(loss_w1, model)
+                grad_entropy_penalty = grad_norm(loss_entropy_penalty, model)
+                grad_loss = grad_norm(loss, model)
+                #log gradient norms
+                writer.add_scalar('grad_norm/gauss_ce', grad_gauss_ce.item(), counter)
+                writer.add_scalar('grad_norm/w1', grad_w1.item(), counter)
+                writer.add_scalar('grad_norm/entropy_penalty', grad_entropy_penalty.item(), counter)
+                writer.flush()
 
             batch_iterator.set_postfix({
             "loss": f"{loss.item():6.2f}",
