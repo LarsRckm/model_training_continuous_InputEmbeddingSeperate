@@ -144,7 +144,11 @@ def train_model_TimeSeries_paper(config):
 
     optimizer = torch.optim.Adam(model.parameters(), lr=config["lr"], eps=1e-9, weight_decay=1e-4)
 
-    total_steps = config["num_epochs"] * (config["train_count"] // config["batch_size"])
+    train_count = config["train_count"]
+    batch_size = config["batch_size"]
+    num_epochs = config["num_epochs"]
+
+    total_steps = num_epochs * (train_count // batch_size)
     warmup_steps = int(0.05 * total_steps)
 
     scheduler = torch.optim.lr_scheduler.SequentialLR(
@@ -187,13 +191,17 @@ def train_model_TimeSeries_paper(config):
     #tracking loss
     writer = SummaryWriter("results_train/my_experiment")
     counter = 0
+
+    #loss weighting
+    loss_w1_weight = config["loss_w1"]
+    loss_entropy_penalty_weight = config["loss_entropy_penalty"]
     
     #loss function
     # loss_fn = nn.CrossEntropyLoss(label_smoothing=config["label_smoothing"]).to(device)
     # loss_grad = nn.MSELoss().to(device)
     # soft_argmax = nn.SmoothL1Loss().to(device)
 
-    for epoch in range(initial_epoch, config["num_epochs"]):
+    for epoch in range(initial_epoch, num_epochs):
         torch.cuda.empty_cache()
         model.train()
         batch_iterator = tqdm(train_dataloader, desc=f"Processing epoch {epoch:02d}")
@@ -234,16 +242,16 @@ def train_model_TimeSeries_paper(config):
             groundTruth = batch["groundTruth_indices"].to(device)  #(batch,seq_len) --> (batch * seq_len)
             groundTruth = groundTruth.view(groundTruth.shape[0]*groundTruth.shape[1],1)
             prediction = proj_output.view(-1, vocab_size_tgt)                   #(batch,seq_len, 1) --> (batch * seq_len, tgt_vocab_size)
-            # print("prediction", prediction.shape)
-            # prediction_probs = torch.softmax(prediction, dim=-1)     # (B*S,V)
-            # lossCE = loss_fn(prediction, groundTruth)                         #calculate cross-entropy-loss
+            prediction_prob= torch.softmax(prediction, dim=-1)    #(B*S, V)
+            prediction_prob_std = torch.std(prediction_prob, dim=-1).mean()
             
 
             #calculate gauss ce loss
+            std_factor = 0.6
             #gaussian distribution around the groundtruth token
             x = torch.ones_like(groundTruth).to(device) * torch.arange(config["vocab_size"] + 1, device=device).float().unsqueeze(0)
             groundTruth_extended = groundTruth * torch.ones(1, config["vocab_size"]+1, device=device).float()
-            groundTruth_prob =  1/(config["groundtruth_std"]*np.sqrt(2*np.pi)) * torch.exp(-0.5 * ((x - groundTruth_extended) / config["groundtruth_std"]) ** 2)
+            groundTruth_prob =  1/(prediction_prob_std*std_factor*np.sqrt(2*np.pi)) * torch.exp(-0.5 * ((x - groundTruth_extended) / (prediction_prob_std*std_factor)) ** 2)
             log_p = F.log_softmax(prediction, dim=-1)
             loss_gauss_ce = -(groundTruth_prob * log_p).sum(dim=-1).mean()
 
@@ -262,14 +270,24 @@ def train_model_TimeSeries_paper(config):
             #calculate entropy - penalty
             loss_entropy_penalty = - (prediction_prob * torch.log(prediction_prob + 1e-8)).sum(dim=-1).mean()
             
+            if counter % 100 == 0:
+                grad_gauss_ce = grad_norm(loss_gauss_ce, model)
+                grad_w1 = grad_norm(loss_w1, model)
+                grad_entropy_penalty = grad_norm(loss_entropy_penalty, model)
+
+
+            eps = 1e-8
 
             #total loss
-            if(epoch < 30):
-                loss = loss_gauss_ce + config["loss_w1"] * loss_w1
+            start_epochs = 20
+            if(epoch < start_epochs):
+                loss = loss_gauss_ce + loss_w1_weight * grad_gauss_ce / (grad_w1 + eps) * loss_w1
             else:
-                loss = loss_gauss_ce + config["loss_w1"] * loss_w1 + config["loss_entropy_penalty"] * loss_entropy_penalty
+                loss = loss_gauss_ce + loss_w1_weight * grad_gauss_ce / (grad_w1 + eps) * loss_w1 + loss_entropy_penalty_weight * grad_gauss_ce / (grad_entropy_penalty + eps) * loss_entropy_penalty
 
-            
+                if counter < (train_count // batch_size) * (80):
+                    loss_w1_weight += (1-config["loss_w1"]) / ((train_count // batch_size) * (80))
+                    loss_entropy_penalty_weight += (1-config["loss_entropy_penalty"]) / ((train_count // batch_size) * (80))
 
 
             #log the loss values
@@ -278,11 +296,8 @@ def train_model_TimeSeries_paper(config):
             writer.add_scalar('loss/w1', loss_w1.item(), counter)
             writer.add_scalar('loss/loss_entropy_penalty', loss_entropy_penalty.item(), counter)
 
-            if counter % 1000 == 0:
+            if counter % 100 == 0:
                 #calculate gradient norms
-                grad_gauss_ce = grad_norm(loss_gauss_ce, model)
-                grad_w1 = grad_norm(loss_w1, model)
-                grad_entropy_penalty = grad_norm(loss_entropy_penalty, model)
                 grad_loss = grad_norm(loss, model)
                 #log gradient norms
                 writer.add_scalar('grad_norm/gauss_ce', grad_gauss_ce.item(), counter)
