@@ -270,20 +270,30 @@ def train_model_TimeSeries_paper(config):
             #calculate entropy - penalty
             loss_entropy_penalty = - (prediction_prob * torch.log(prediction_prob + 1e-8)).sum(dim=-1).mean()
             
-            if counter % 100 == 0:
+            if counter % 1000 == 0:
                 grad_gauss_ce = grad_norm(loss_gauss_ce, model)
                 grad_w1 = grad_norm(loss_w1, model)
                 grad_entropy_penalty = grad_norm(loss_entropy_penalty, model)
 
 
-            eps = 1e-8
+            # eps = 1e-8
+            # #total loss
+            # start_epochs = 20
+            # if(epoch < start_epochs):
+            #     loss = loss_gauss_ce + loss_w1_weight * grad_gauss_ce / (grad_w1 + eps) * loss_w1
+            # else:
+            #     loss = loss_gauss_ce + loss_w1_weight * grad_gauss_ce / (grad_w1 + eps) * loss_w1 + loss_entropy_penalty_weight * grad_gauss_ce / (grad_entropy_penalty + eps) * loss_entropy_penalty
+
+            #     if counter < (train_count // batch_size) * (80):
+            #         loss_w1_weight += (1-config["loss_w1"]) / ((train_count // batch_size) * (80))
+            #         loss_entropy_penalty_weight += (1-config["loss_entropy_penalty"]) / ((train_count // batch_size) * (80))
 
             #total loss
             start_epochs = 20
             if(epoch < start_epochs):
-                loss = loss_gauss_ce + loss_w1_weight * grad_gauss_ce / (grad_w1 + eps) * loss_w1
+                loss = loss_gauss_ce + loss_w1_weight * loss_w1
             else:
-                loss = loss_gauss_ce + loss_w1_weight * grad_gauss_ce / (grad_w1 + eps) * loss_w1 + loss_entropy_penalty_weight * grad_gauss_ce / (grad_entropy_penalty + eps) * loss_entropy_penalty
+                loss = loss_gauss_ce + loss_w1_weight * loss_w1 + loss_entropy_penalty_weight * loss_entropy_penalty
 
                 if counter < (train_count // batch_size) * (80):
                     loss_w1_weight += (1-config["loss_w1"]) / ((train_count // batch_size) * (80))
@@ -296,7 +306,7 @@ def train_model_TimeSeries_paper(config):
             writer.add_scalar('loss/w1', loss_w1.item(), counter)
             writer.add_scalar('loss/loss_entropy_penalty', loss_entropy_penalty.item(), counter)
 
-            if counter % 100 == 0:
+            if counter % 1000 == 0:
                 #calculate gradient norms
                 grad_loss = grad_norm(loss, model)
                 #log gradient norms
