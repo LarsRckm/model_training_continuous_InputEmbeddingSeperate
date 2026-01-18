@@ -295,8 +295,8 @@ def train_model_TimeSeries_paper(config):
             #         loss_entropy_penalty_weight += (1-config["loss_entropy_penalty"]) / ((train_count // batch_size) * (80))
 
             #total loss
-            start_epochs = 20
-            middle_epoch = 50
+            start_epochs = 15
+            middle_epoch = 30
             if(epoch < start_epochs):
                 loss = loss_gauss_ce + loss_w1_weight * loss_w1
             elif(epoch < middle_epoch):
