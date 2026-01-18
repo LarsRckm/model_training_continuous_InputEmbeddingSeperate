@@ -186,6 +186,7 @@ def train_model_TimeSeries_paper(config):
     i2v_dict = index_to_value_dict(config["vocab_size"])
     i2v = torch.zeros(config["vocab_size"] + 1).to(device)
     for k, v in i2v_dict.items():
+        print(f"key: {k}; value: {v}")
         i2v[int(k)] = float(v)
 
     #tracking loss
@@ -240,22 +241,24 @@ def train_model_TimeSeries_paper(config):
             noise_std_copy = noise_std[0]                   #noise_std:     float
 
 
-            groundTruth = batch["groundTruth_indices"].to(device)  #(batch,seq_len) --> (batch * seq_len)
+            groundTruth = batch["groundTruth_indices"].to(device)  #(B,S) --> (B*S)
             groundTruth = groundTruth.view(groundTruth.shape[0]*groundTruth.shape[1],1)
+            tokens = torch.ones_like(groundTruth).to(device) * torch.arange(config["vocab_size"] + 1, device=device).float().unsqueeze(0) #(B*S,V)
             prediction = proj_output.view(-1, vocab_size_tgt)                   #(batch,seq_len, 1) --> (batch * seq_len, tgt_vocab_size)
             prediction_prob = torch.softmax(prediction, dim=-1)    #(B*S, V)
-            prediction_prob_std = torch.std(prediction_prob, dim=-1).mean()
+            prediction_prob_mean = (prediction_prob*tokens).sum(dim=-1)  #(B*S)
+            prediction_prob_std = torch.sqrt((prediction_prob*(tokens - prediction_prob_mean.unsqueeze(-1))**2).sum(dim=-1)).mean()
             
 
             #calculate gauss ce loss
             std_factor = 0.6
-            std = (prediction_prob_std * std_factor).detach()
+            std = (prediction_prob_std * std_factor)
             std = (max(10, std.item()))
 
             #gaussian distribution around the groundtruth token
-            x = torch.ones_like(groundTruth).to(device) * torch.arange(config["vocab_size"] + 1, device=device).float().unsqueeze(0)
+            # x = torch.ones_like(groundTruth).to(device) * torch.arange(config["vocab_size"] + 1, device=device).float().unsqueeze(0)
             groundTruth_extended = groundTruth * torch.ones(1, config["vocab_size"]+1, device=device).float()
-            groundTruth_prob =  1/(std*np.sqrt(2*np.pi)) * torch.exp(-0.5 * ((x - groundTruth_extended) / (std)) ** 2)
+            groundTruth_prob =  1/(std*np.sqrt(2*np.pi)) * torch.exp(-0.5 * ((tokens - groundTruth_extended) / (std)) ** 2)
             log_p = F.log_softmax(prediction, dim=-1)
             loss_gauss_ce = -(groundTruth_prob * log_p).sum(dim=-1).mean()
 
@@ -276,8 +279,7 @@ def train_model_TimeSeries_paper(config):
 
             #calculate curvature loss (2. difference)
             pred_norm = (prediction_prob * i2v.view(1,1,-1)).sum(dim=-1)   # (B,S)
-            pred_de_norm = pred_norm * div_term + min_value
-            d2 = pred_de_norm[:,2:] - 2*pred_de_norm[:,1:-1] + pred_de_norm[:,:-2]
+            d2 = pred_norm[:,2:] - 2*pred_norm[:,1:-1] + pred_norm[:,:-2]
             loss_curv = torch.sqrt((d2**2 + (1e-3)**2)).mean()
 
             # eps = 1e-8
