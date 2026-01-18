@@ -183,10 +183,10 @@ def train_model_TimeSeries_paper(config):
         scheduler.load_state_dict(state['schedulaer_state_dict'])
 
     #recalculating original numbers
-    # i2v_dict = index_to_value_dict(config["vocab_size"])
-    # i2v = torch.zeros(config["vocab_size"] + 1).to(device)
-    # for k, v in i2v_dict.items():
-    #     i2v[int(k)] = float(v)
+    i2v_dict = index_to_value_dict(config["vocab_size"])
+    i2v = torch.zeros(config["vocab_size"] + 1).to(device)
+    for k, v in i2v_dict.items():
+        i2v[int(k)] = float(v)
 
     #tracking loss
     writer = SummaryWriter("results_train/my_experiment")
@@ -195,6 +195,7 @@ def train_model_TimeSeries_paper(config):
     #loss weighting
     loss_w1_weight = config["loss_w1"]
     loss_entropy_penalty_weight = config["loss_entropy_penalty"]
+    loss_curv_weight = config["loss_curv"]
     
     #loss function
     # loss_fn = nn.CrossEntropyLoss(label_smoothing=config["label_smoothing"]).to(device)
@@ -242,16 +243,19 @@ def train_model_TimeSeries_paper(config):
             groundTruth = batch["groundTruth_indices"].to(device)  #(batch,seq_len) --> (batch * seq_len)
             groundTruth = groundTruth.view(groundTruth.shape[0]*groundTruth.shape[1],1)
             prediction = proj_output.view(-1, vocab_size_tgt)                   #(batch,seq_len, 1) --> (batch * seq_len, tgt_vocab_size)
-            prediction_prob= torch.softmax(prediction, dim=-1)    #(B*S, V)
+            prediction_prob = torch.softmax(prediction, dim=-1)    #(B*S, V)
             prediction_prob_std = torch.std(prediction_prob, dim=-1).mean()
             
 
             #calculate gauss ce loss
             std_factor = 0.6
+            std = (prediction_prob_std * std_factor).detach()
+            std = (max(10, std.item()))
+
             #gaussian distribution around the groundtruth token
             x = torch.ones_like(groundTruth).to(device) * torch.arange(config["vocab_size"] + 1, device=device).float().unsqueeze(0)
             groundTruth_extended = groundTruth * torch.ones(1, config["vocab_size"]+1, device=device).float()
-            groundTruth_prob =  1/(prediction_prob_std*std_factor*np.sqrt(2*np.pi)) * torch.exp(-0.5 * ((x - groundTruth_extended) / (prediction_prob_std*std_factor)) ** 2)
+            groundTruth_prob =  1/(std*np.sqrt(2*np.pi)) * torch.exp(-0.5 * ((x - groundTruth_extended) / (std)) ** 2)
             log_p = F.log_softmax(prediction, dim=-1)
             loss_gauss_ce = -(groundTruth_prob * log_p).sum(dim=-1).mean()
 
@@ -261,8 +265,7 @@ def train_model_TimeSeries_paper(config):
             # prediction_token = (prediction_prob*vocab_tokens).sum(dim=-1).view(-1) #(B*L)
             # loss_soft_argmax = ((prediction_token - groundTruth.float())**2).mean()
 
-            #wasserstein loss
-            prediction_prob = torch.softmax(prediction, dim=-1) #(B,L,V)
+            #wasserstein loss #(B,L,V)
             loss_w1 = wasserstein1_cdf_loss(prediction_prob, groundTruth_prob, reduction="mean")
             
 
@@ -270,11 +273,12 @@ def train_model_TimeSeries_paper(config):
             #calculate entropy - penalty
             loss_entropy_penalty = - (prediction_prob * torch.log(prediction_prob + 1e-8)).sum(dim=-1).mean()
             
-            if counter % 1000 == 0:
-                grad_gauss_ce = grad_norm(loss_gauss_ce, model)
-                grad_w1 = grad_norm(loss_w1, model)
-                grad_entropy_penalty = grad_norm(loss_entropy_penalty, model)
 
+            #calculate curvature loss (2. difference)
+            pred_norm = (prediction_prob * i2v.view(1,1,-1)).sum(dim=-1)   # (B,S)
+            pred_de_norm = pred_norm * div_term + min_value
+            d2 = pred_de_norm[:,2:] - 2*pred_de_norm[:,1:-1] + pred_de_norm[:,:-2]
+            loss_curv = torch.sqrt((d2**2 + (1e-3)**2)).mean()
 
             # eps = 1e-8
             # #total loss
@@ -290,14 +294,17 @@ def train_model_TimeSeries_paper(config):
 
             #total loss
             start_epochs = 20
+            middle_epoch = 50
             if(epoch < start_epochs):
                 loss = loss_gauss_ce + loss_w1_weight * loss_w1
-            else:
+            elif(epoch < middle_epoch):
                 loss = loss_gauss_ce + loss_w1_weight * loss_w1 + loss_entropy_penalty_weight * loss_entropy_penalty
+            else:
+                loss = loss_gauss_ce + loss_w1_weight * loss_w1 + loss_entropy_penalty_weight * loss_entropy_penalty + loss_curv_weight * loss_curv
 
-                if counter < (train_count // batch_size) * (80):
-                    loss_w1_weight += (1-config["loss_w1"]) / ((train_count // batch_size) * (80))
-                    loss_entropy_penalty_weight += (1-config["loss_entropy_penalty"]) / ((train_count // batch_size) * (80))
+                # if counter < (train_count // batch_size) * (80):
+                #     loss_w1_weight += (1-config["loss_w1"]) / ((train_count // batch_size) * (80))
+                #     loss_entropy_penalty_weight += (1-config["loss_entropy_penalty"]) / ((train_count // batch_size) * (80))
 
 
             #log the loss values
@@ -308,6 +315,9 @@ def train_model_TimeSeries_paper(config):
 
             if counter % 1000 == 0:
                 #calculate gradient norms
+                grad_gauss_ce = grad_norm(loss_gauss_ce, model)
+                grad_w1 = grad_norm(loss_w1, model)
+                grad_entropy_penalty = grad_norm(loss_entropy_penalty, model)
                 grad_loss = grad_norm(loss, model)
                 #log gradient norms
                 writer.add_scalar('grad_norm/gauss_ce', grad_gauss_ce.item(), counter)
@@ -317,13 +327,15 @@ def train_model_TimeSeries_paper(config):
 
             batch_iterator.set_postfix({
             "loss": f"{loss.item():6.2f}",
-            "grad_loss": f"{grad_loss.item():6.2f}",
             "gauss_ce": f"{loss_gauss_ce.item():6.2f}",
-            "gradd_gauss_ce": f"{grad_gauss_ce.item():6.2f}",
             "w1": f"{loss_w1.item():6.2f}",
-            "grad_w1": f"{grad_w1.item():6.2f}",
             "entropy_pen": f"{loss_entropy_penalty.item():6.2f}",
-            "grad_entropy_pen": f"{grad_entropy_penalty.item():6.2f}"
+            "loss_curv": f"{loss_curv.item():6.2f}",
+            "target_std": f"{std:6.2f}",
+            "grad_loss": f"{grad_loss.item():6.2f}",
+            "gradd_gauss_ce": f"{grad_gauss_ce.item():6.2f}",
+            "grad_w1": f"{grad_w1.item():6.2f}"
+            # "grad_entropy_pen": f"{grad_entropy_penalty.item():6.2f}"
             })
 
             #backpropagate the loss
