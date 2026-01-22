@@ -247,19 +247,22 @@ def train_model_TimeSeries_paper(config):
             groundTruth = batch["groundTruth_indices"].to(device)
             groundTruth = groundTruth.view(groundTruth.shape[0]*groundTruth.shape[1],1) #(B,S) --> (B*S)
             #erstelle vocab tokens als ein Tensor
-            tokens = torch.ones_like(groundTruth).to(device) * torch.arange(config["vocab_size"] + 1, device=device).float().unsqueeze(0) #(B*S,V)
+            #tokens = torch.ones_like(groundTruth).to(device) * torch.arange(config["vocab_size"] + 1, device=device).float().unsqueeze(0) #(B*S,V)
+            tokens = torch.arange(config["vocab_size"] + 1, device=device).float().unsqueeze(0).expand(groundTruth.shape[0], config["vocab_size"] + 1)
             #aus mu und std für jeden eintrag von prediction eine gauss verteilung berechnen
             prediction = proj_output.view(-1, 2)                   #(batch,seq_len, 2) --> (batch * seq_len, 2)
-            prediction_mu = prediction[:,0].unsqueeze(-1)         #(B*S, 1)
+            prediction_mu = prediction[:,0].unsqueeze(-1)          #(B*S, 1)
             prediction_std = prediction[:,1].unsqueeze(-1)        #(B*S, 1)
             prediction_prob =  1/(prediction_std*np.sqrt(2*np.pi)) * torch.exp(-0.5 * ((tokens - prediction_mu) / (prediction_std)) ** 2) #(B*S,V)
+            prediction_prob = prediction_prob / (prediction_prob.sum(dim=-1, keepdim=True) + 1e-12)
+
 
             #groundtruth probability bestimmen
             std_factor = 0.6
             std = (prediction_std * std_factor)
-            # std = (max(10, std.item()))
             groundTruth_extended = groundTruth * torch.ones(1, config["vocab_size"]+1, device=device).float()
             groundTruth_prob =  1/(std*np.sqrt(2*np.pi)) * torch.exp(-0.5 * ((tokens - groundTruth_extended) / (std)) ** 2)
+            groundTruth_prob = groundTruth_prob / (groundTruth_prob.sum(dim=-1, keepdim=True) + 1e-12)
 
             
             # prediction = proj_output.view(-1, vocab_size_tgt)                   #(batch,seq_len, 1) --> (batch * seq_len, tgt_vocab_size)
@@ -269,10 +272,10 @@ def train_model_TimeSeries_paper(config):
             
 
             #calculate gauss ce loss
-            std_factor = 0.6
-            std = (std * std_factor)
-            groundTruth_extended = groundTruth * torch.ones(1, config["vocab_size"]+1, device=device).float()
-            groundTruth_prob =  1/(std*np.sqrt(2*np.pi)) * torch.exp(-0.5 * ((tokens - groundTruth_extended) / (std)) ** 2)
+            # std_factor = 0.6
+            # std = (std * std_factor)
+            # groundTruth_extended = groundTruth * torch.ones(1, config["vocab_size"]+1, device=device).float()
+            # groundTruth_prob =  1/(std*np.sqrt(2*np.pi)) * torch.exp(-0.5 * ((tokens - groundTruth_extended) / (std)) ** 2)
             # log_p = torch.log(prediction_prob + 1e-8)
             # loss_gauss_ce = -(groundTruth_prob * log_p).sum(dim=-1).mean()
             # std = (max(10, std.item()))
