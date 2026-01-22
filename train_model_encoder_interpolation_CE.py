@@ -253,6 +253,7 @@ def train_model_TimeSeries_paper(config):
             prediction = proj_output.view(-1, 2)                   #(batch,seq_len, 2) --> (batch * seq_len, 2)
             prediction_mu = prediction[:,0].unsqueeze(-1)          #(B*S, 1)
             prediction_std = prediction[:,1].unsqueeze(-1)        #(B*S, 1)
+            prediction_std = F.softplus(prediction_std) + 1e-4
             prediction_prob =  1/(prediction_std*np.sqrt(2*np.pi)) * torch.exp(-0.5 * ((tokens - prediction_mu) / (prediction_std)) ** 2) #(B*S,V)
             prediction_prob = prediction_prob / (prediction_prob.sum(dim=-1, keepdim=True) + 1e-12)
 
@@ -306,7 +307,10 @@ def train_model_TimeSeries_paper(config):
 
 
             #calculate KL-loss
-            prediction_prob_log = torch.log(prediction_prob + 1e-8)
+            eps = 1e-12
+            groundTruth_prob = groundTruth_prob.clamp_min(eps)
+            groundTruth_prob = groundTruth_prob / (groundTruth_prob.sum(dim=-1, keepdim=True) + 1e-12)
+            prediction_prob_log = torch.log(prediction_prob.clamp_min(eps))
             loss_kl = F.kl_div(prediction_prob_log, groundTruth_prob, reduction="batchmean")
             
 
