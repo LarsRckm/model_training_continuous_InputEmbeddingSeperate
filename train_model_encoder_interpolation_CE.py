@@ -273,8 +273,8 @@ def train_model_TimeSeries_paper(config):
             std = (std * std_factor)
             groundTruth_extended = groundTruth * torch.ones(1, config["vocab_size"]+1, device=device).float()
             groundTruth_prob =  1/(std*np.sqrt(2*np.pi)) * torch.exp(-0.5 * ((tokens - groundTruth_extended) / (std)) ** 2)
-            log_p = F.log_softmax(prediction, dim=-1)
-            loss_gauss_ce = -(groundTruth_prob * log_p).sum(dim=-1).mean()
+            # log_p = torch.log(prediction_prob + 1e-8)
+            # loss_gauss_ce = -(groundTruth_prob * log_p).sum(dim=-1).mean()
             # std = (max(10, std.item()))
 
             #gaussian distribution around the groundtruth token
@@ -290,13 +290,16 @@ def train_model_TimeSeries_paper(config):
             # prediction_token = (prediction_prob*vocab_tokens).sum(dim=-1).view(-1) #(B*L)
             # loss_soft_argmax = ((prediction_token - groundTruth.float())**2).mean()
 
+
+
+
             #wasserstein loss #(B,L,V)
-            loss_w1 = wasserstein1_cdf_loss(prediction_prob, groundTruth_prob, reduction="mean")
+            # loss_w1 = wasserstein1_cdf_loss(prediction_prob, groundTruth_prob, reduction="mean")
             
 
 
             #calculate entropy - penalty
-            loss_entropy_penalty = - (prediction_prob * torch.log(prediction_prob + 1e-8)).sum(dim=-1).mean()
+            # loss_entropy_penalty = - (prediction_prob * torch.log(prediction_prob + 1e-8)).sum(dim=-1).mean()
 
 
             #calculate KL-loss
@@ -359,9 +362,9 @@ def train_model_TimeSeries_paper(config):
             batch_iterator.set_postfix({
             "loss": f"{loss.item():6.2f}",
             "loss_kl": f"{loss_kl.item():6.2f}",
-            "gauss_ce": f"{loss_gauss_ce.item():6.2f}",
-            "w1": f"{loss_w1.item():6.2f}",
-            "entropy_pen": f"{loss_entropy_penalty.item():6.2f}",
+            # "gauss_ce": f"{loss_gauss_ce.item():6.2f}",
+            # "w1": f"{loss_w1.item():6.2f}",
+            # "entropy_pen": f"{loss_entropy_penalty.item():6.2f}",
             # "loss_curv": f"{loss_curv.item():6.2f}",
             # "target_std": f"{std:6.2f}",
             # "grad_loss": f"{grad_loss.item():6.2f}",
