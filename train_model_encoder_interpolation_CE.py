@@ -29,10 +29,10 @@ def get_ds_timeSeries(config):
     train_dataloader = DataLoader(train_ds, batch_size=config['batch_size'])
     val_dataloader = DataLoader(val_ds, batch_size=1)
 
-    return train_dataloader, val_dataloader, x_values.shape[0], len(v2i_dict),(len(v2i_dict) - len(config["extra_tokens"]))
+    return train_dataloader, val_dataloader, x_values.shape[0], len(v2i_dict)
 
-def get_model_timeSeries(config, seq_len, vocab_size_src, vocab_size_tgt):
-    model = build_encoder_interpolation_uknToken_projection(vocab_size_src,vocab_size_tgt,seq_len, config["d_model"], dropout=config["dropout"])
+def get_model_timeSeries(config, seq_len, vocab_size_src):
+    model = build_encoder_interpolation_uknToken_projection(vocab_size_src, seq_len, config["d_model"], dropout=config["dropout"])
     return model
 
 def run_validation_TimeSeries(model,validation_dl, device, num_examples, config, epoch_nr):
@@ -52,9 +52,9 @@ def run_validation_TimeSeries(model,validation_dl, device, num_examples, config,
             assert encoder_input.size(0) == 1, "Batch size needs to be 1"
 
             if(config["remove_parts"]):              
-                model_out, _ = greedy_decode_timeSeries_paper(model, encoder_input_removed, time)
+                model_out = greedy_decode_timeSeries_paper(model, encoder_input_removed, time)
             else:
-                model_out, _ = greedy_decode_timeSeries_paper(model, encoder_input, time)
+                model_out = greedy_decode_timeSeries_paper(model, encoder_input, time)
 
             decoder_input = batch['groundTruth'].to(device)
             decoder_input = (div_term*decoder_input)+min_value
@@ -62,7 +62,8 @@ def run_validation_TimeSeries(model,validation_dl, device, num_examples, config,
             df.loc[:,f"noise_{count}"] = encoder_input[0,:].cpu().numpy()                   #index form
             df.loc[:,f"noise_removed_{count}"] = encoder_input_removed[0,:].cpu().numpy()   #index form
             df.loc[:,f"groundTruth_{count}"] = decoder_input[0,:].cpu().numpy()             #float form
-            df.loc[:,f"prediction_{count}"] = model_out[:].cpu().numpy()                    #index form
+            df.loc[:,f"prediction_mu_{count}"] = model_out[0,:,0].cpu().numpy()                    #index form
+            df.loc[:,f"prediction_sigma_{count}"] = model_out[0,:,1].cpu().numpy()                    #index form
             df.loc[0,f"min_value_{count}"] = min_value[0].cpu().numpy()                     #float form
             df.loc[0,f"div_term_{count}"] = div_term[0].cpu().numpy()                       #float form
             df.loc[0,f"noise_std_{count}"] = noise_std[0].cpu().numpy()                     #float form
@@ -75,16 +76,16 @@ def run_validation_TimeSeries(model,validation_dl, device, num_examples, config,
         # erst ohne Maske
         df = pd.read_csv(f"results_val/heat_map_data.csv")
         encoder_input = torch.tensor(df["noisy_TimeSeries"]).unsqueeze(0).to(device) 
-        _, proj_output = greedy_decode_timeSeries_paper(model, encoder_input, None)
-        prob_distribution = np.memmap(f"results_train/prob_distribution_epoch_{epoch_nr}.npy", dtype='float32', mode='w+', shape=proj_output[:,:].shape)
-        prob_distribution[:] = proj_output[:,:].detach().cpu().numpy()    #(seq_len, vocab_size)
+        proj_output = greedy_decode_timeSeries_paper(model, encoder_input, None)
+        prob_distribution = np.memmap(f"results_train/prob_distribution_epoch_{epoch_nr}.npy", dtype='float32', mode='w+', shape=proj_output[0,:,:].shape)
+        prob_distribution[:] = proj_output[0,:,:].detach().cpu().numpy()    #(seq_len, vocab_size)
         prob_distribution.flush()
 
         # dann mit Maske 
         encoder_input_removed = torch.tensor(df["noisy_TimeSeries_removed"]).unsqueeze(0).to(device) 
-        _, proj_output = greedy_decode_timeSeries_paper(model, encoder_input_removed, None)
-        prob_distribution = np.memmap(f"results_train/prob_distribution_epoch_masking_{epoch_nr}.npy", dtype='float32', mode='w+', shape=proj_output[:,:].shape)
-        prob_distribution[:] = proj_output[:,:].detach().cpu().numpy()    #(seq_len, vocab_size)
+        proj_output = greedy_decode_timeSeries_paper(model, encoder_input_removed, None)
+        prob_distribution = np.memmap(f"results_train/prob_distribution_epoch_masking_{epoch_nr}.npy", dtype='float32', mode='w+', shape=proj_output[0,:,:].shape)
+        prob_distribution[:] = proj_output[0,:,:].detach().cpu().numpy()    #(seq_len, vocab_size)
         prob_distribution.flush()
 
 
@@ -92,11 +93,11 @@ def greedy_decode_timeSeries_paper(model, source: torch.Tensor, time: torch.Tens
     
     encoder_output = model.encode(source, None, time)
     
-    proj_out = model.project(encoder_output[0,:])           #(seq_len, d_model) -> (seq_len, vocab_size)
+    proj_out = model.project(encoder_output)           #(batch,seq_len, d_model) -> (bach,seq_len, 2)
 
-    _, indices = torch.max(proj_out, dim=1)                 #(batch, seq_len, vocab_size) -> (seq_len)
+    # _, indices = torch.max(proj_out, dim=1)                 #(batch, seq_len, vocab_size) -> (seq_len)
     
-    return indices, proj_out
+    return proj_out    #(batch, seq_len, 2)
 
 
 def grad_norm(loss, model: nn.Module):
@@ -139,8 +140,8 @@ def train_model_TimeSeries_paper(config):
     os.makedirs("results_train", exist_ok=True)
     os.makedirs("results_val", exist_ok=True)
     
-    train_dataloader, val_dataloader, seq_len, vocab_size_src, vocab_size_tgt = get_ds_timeSeries(config)
-    model = get_model_timeSeries(config, seq_len, vocab_size_src, vocab_size_tgt).to(device)
+    train_dataloader, val_dataloader, seq_len, vocab_size_src = get_ds_timeSeries(config)
+    model = get_model_timeSeries(config, seq_len, vocab_size_src).to(device)
 
     optimizer = torch.optim.Adam(model.parameters(), lr=config["lr"], eps=1e-9, weight_decay=1e-4)
 
@@ -183,20 +184,20 @@ def train_model_TimeSeries_paper(config):
         scheduler.load_state_dict(state['schedulaer_state_dict'])
 
     #recalculating original numbers
-    i2v_dict = index_to_value_dict(config["vocab_size"])
-    i2v = torch.zeros(config["vocab_size"] + 1).to(device)
-    for k, v in i2v_dict.items():
-        print(f"key: {k}; value: {v}")
-        i2v[int(k)] = float(v)
+    # i2v_dict = index_to_value_dict(config["vocab_size"])
+    # i2v = torch.zeros(config["vocab_size"] + 1).to(device)
+    # for k, v in i2v_dict.items():
+    #     print(f"key: {k}; value: {v}")
+    #     i2v[int(k)] = float(v)
 
     #tracking loss
     writer = SummaryWriter("results_train/my_experiment")
     counter = 0
 
     #loss weighting
-    loss_w1_weight = config["loss_w1"]
-    loss_entropy_penalty_weight = config["loss_entropy_penalty"]
-    loss_curv_weight = config["loss_curv"]
+    # loss_w1_weight = config["loss_w1"]
+    # loss_entropy_penalty_weight = config["loss_entropy_penalty"]
+    # loss_curv_weight = config["loss_curv"]
     
     #loss function
     # loss_fn = nn.CrossEntropyLoss(label_smoothing=config["label_smoothing"]).to(device)
@@ -225,14 +226,15 @@ def train_model_TimeSeries_paper(config):
                 #train model without interpolation purpose
                 encoder_output = model.encode(encoder_input, None, None)          #(Batch, seq_len) --> (Batch, seq_len, d_model)
 
-            proj_output = model.project(encoder_output)                     #(Batch, seq_len, d_model) --> (Batch, seq_len, vocab_size)
+            proj_output = model.project(encoder_output)                     #(Batch, seq_len, d_model) --> (Batch, seq_len, 2)
 
             proj_output_copy = proj_output[0,:,:]       #use first batch entry to store results
-            _, indices = torch.max(proj_output_copy, 1) #calculate highest value with equivalent index in each row
+            # _, indices = torch.max(proj_output_copy, 1) #calculate highest value with equivalent index in each row
 
 
             #create copies to store training results
-            proj_output_copy = indices[:]                   #prediction:    index
+            proj_output_copy_mu = proj_output_copy[:, 0]    #prediction mu
+            proj_output_copy_std = proj_output_copy[:, 1]   #prediction std
             decoder_input_copy = decoder_input[0,:]         #groundTruth:   normalized
             noise_copy = encoder_input[0,:]                 #noise:         index
             noise_removed_copy = encoder_input_removed[0,:] #noise removed: index
@@ -240,27 +242,47 @@ def train_model_TimeSeries_paper(config):
             min_value_copy = min_value[0]                   #min_value:     float
             noise_std_copy = noise_std[0]                   #noise_std:     float
 
-
-            groundTruth = batch["groundTruth_indices"].to(device)  #(B,S) --> (B*S)
-            groundTruth = groundTruth.view(groundTruth.shape[0]*groundTruth.shape[1],1)
+            #was muss ich machen?
+            #nehme groundtruth und redimensioniere zu (batch*seq_len, 1)
+            groundTruth = batch["groundTruth_indices"].to(device)
+            groundTruth = groundTruth.view(groundTruth.shape[0]*groundTruth.shape[1],1) #(B,S) --> (B*S)
+            #erstelle vocab tokens als ein Tensor
             tokens = torch.ones_like(groundTruth).to(device) * torch.arange(config["vocab_size"] + 1, device=device).float().unsqueeze(0) #(B*S,V)
-            prediction = proj_output.view(-1, vocab_size_tgt)                   #(batch,seq_len, 1) --> (batch * seq_len, tgt_vocab_size)
-            prediction_prob = torch.softmax(prediction, dim=-1)    #(B*S, V)
-            prediction_prob_mean = (prediction_prob*tokens).sum(dim=-1)  #(B*S)
-            prediction_prob_std = torch.sqrt((prediction_prob*(tokens - prediction_prob_mean.unsqueeze(-1))**2).sum(dim=-1)).mean()
+            #aus mu und std für jeden eintrag von prediction eine gauss verteilung berechnen
+            prediction = proj_output.view(-1, 2)                   #(batch,seq_len, 2) --> (batch * seq_len, 2)
+            prediction_mu = prediction[:,0].unsqueeze(-1)         #(B*S, 1)
+            prediction_std = prediction[:,1].unsqueeze(-1)        #(B*S, 1)
+            prediction_prob =  1/(prediction_std*np.sqrt(2*np.pi)) * torch.exp(-0.5 * ((tokens - prediction_mu) / (prediction_std)) ** 2) #(B*S,V)
+
+            #groundtruth probability bestimmen
+            std_factor = 0.6
+            std = (prediction_std * std_factor)
+            # std = (max(10, std.item()))
+            groundTruth_extended = groundTruth * torch.ones(1, config["vocab_size"]+1, device=device).float()
+            groundTruth_prob =  1/(std*np.sqrt(2*np.pi)) * torch.exp(-0.5 * ((tokens - groundTruth_extended) / (std)) ** 2)
+
+            
+            # prediction = proj_output.view(-1, vocab_size_tgt)                   #(batch,seq_len, 1) --> (batch * seq_len, tgt_vocab_size)
+            # prediction_prob = torch.softmax(prediction, dim=-1)    #(B*S, V)
+            # prediction_prob_mean = (prediction_prob*tokens).sum(dim=-1)  #(B*S)
+            # prediction_prob_std = torch.sqrt((prediction_prob*(tokens - prediction_prob_mean.unsqueeze(-1))**2).sum(dim=-1)).mean()
             
 
             #calculate gauss ce loss
             std_factor = 0.6
-            std = (prediction_prob_std * std_factor)
-            std = (max(10, std.item()))
-
-            #gaussian distribution around the groundtruth token
-            # x = torch.ones_like(groundTruth).to(device) * torch.arange(config["vocab_size"] + 1, device=device).float().unsqueeze(0)
+            std = (std * std_factor)
             groundTruth_extended = groundTruth * torch.ones(1, config["vocab_size"]+1, device=device).float()
             groundTruth_prob =  1/(std*np.sqrt(2*np.pi)) * torch.exp(-0.5 * ((tokens - groundTruth_extended) / (std)) ** 2)
             log_p = F.log_softmax(prediction, dim=-1)
             loss_gauss_ce = -(groundTruth_prob * log_p).sum(dim=-1).mean()
+            # std = (max(10, std.item()))
+
+            #gaussian distribution around the groundtruth token
+            # x = torch.ones_like(groundTruth).to(device) * torch.arange(config["vocab_size"] + 1, device=device).float().unsqueeze(0)
+            # groundTruth_extended = groundTruth * torch.ones(1, config["vocab_size"]+1, device=device).float()
+            # groundTruth_prob =  1/(std*np.sqrt(2*np.pi)) * torch.exp(-0.5 * ((tokens - groundTruth_extended) / (std)) ** 2)
+            # log_p = F.log_softmax(prediction, dim=-1)
+            # loss_gauss_ce = -(groundTruth_prob * log_p).sum(dim=-1).mean()
 
             #calculate soft argmax
             # prediction_prob = torch.softmax(prediction, dim=-1) #(B,L,V)
@@ -275,12 +297,17 @@ def train_model_TimeSeries_paper(config):
 
             #calculate entropy - penalty
             loss_entropy_penalty = - (prediction_prob * torch.log(prediction_prob + 1e-8)).sum(dim=-1).mean()
+
+
+            #calculate KL-loss
+            prediction_prob_log = torch.log(prediction_prob + 1e-8)
+            loss_kl = F.kl_div(prediction_prob_log, groundTruth_prob, reduction="batchmean")
             
 
             #calculate curvature loss (2. difference)
-            pred_norm = (prediction_prob * i2v.view(1,1,-1)).sum(dim=-1)   # (B,S)
-            d2 = pred_norm[:,2:] - 2*pred_norm[:,1:-1] + pred_norm[:,:-2]
-            loss_curv = torch.sqrt((d2**2 + (1e-3)**2)).mean()
+            # pred_norm = (prediction_prob * i2v.view(1,1,-1)).sum(dim=-1)   # (B,S)
+            # d2 = pred_norm[:,2:] - 2*pred_norm[:,1:-1] + pred_norm[:,:-2]
+            # loss_curv = torch.sqrt((d2**2 + (1e-3)**2)).mean()
 
             # eps = 1e-8
             # #total loss
@@ -295,14 +322,15 @@ def train_model_TimeSeries_paper(config):
             #         loss_entropy_penalty_weight += (1-config["loss_entropy_penalty"]) / ((train_count // batch_size) * (80))
 
             #total loss
-            start_epochs = 15
-            middle_epoch = 30
-            if(epoch < start_epochs):
-                loss = loss_gauss_ce + loss_w1_weight * loss_w1
-            elif(epoch < middle_epoch):
-                loss = loss_gauss_ce + loss_w1_weight * loss_w1 + loss_entropy_penalty_weight * loss_entropy_penalty
-            else:
-                loss = loss_gauss_ce + loss_w1_weight * loss_w1 + loss_entropy_penalty_weight * loss_entropy_penalty + loss_curv_weight * loss_curv
+            loss = loss_kl
+            # start_epochs = 15
+            # middle_epoch = 30
+            # if(epoch < start_epochs):
+            #     loss = loss_gauss_ce + loss_w1_weight * loss_w1
+            # elif(epoch < middle_epoch):
+            #     loss = loss_gauss_ce + loss_w1_weight * loss_w1 + loss_entropy_penalty_weight * loss_entropy_penalty
+            # else:
+            #     loss = loss_gauss_ce + loss_w1_weight * loss_w1 + loss_entropy_penalty_weight * loss_entropy_penalty + loss_curv_weight * loss_curv
 
                 # if counter < (train_count // batch_size) * (80):
                 #     loss_w1_weight += (1-config["loss_w1"]) / ((train_count // batch_size) * (80))
@@ -311,32 +339,34 @@ def train_model_TimeSeries_paper(config):
 
             #log the loss values
             writer.add_scalar('loss/total_loss', loss.item(), counter)
-            writer.add_scalar('loss/gauss_ce_loss', loss_gauss_ce.item(), counter)
-            writer.add_scalar('loss/w1', loss_w1.item(), counter)
-            writer.add_scalar('loss/loss_entropy_penalty', loss_entropy_penalty.item(), counter)
+            writer.add_scalar('loss/kl_loss', loss_kl.item(), counter)
+            # writer.add_scalar('loss/gauss_ce_loss', loss_gauss_ce.item(), counter)
+            # writer.add_scalar('loss/w1', loss_w1.item(), counter)
+            # writer.add_scalar('loss/loss_entropy_penalty', loss_entropy_penalty.item(), counter)
 
-            if counter % 1000 == 0:
+            # if counter % 1000 == 0:
                 #calculate gradient norms
-                grad_gauss_ce = grad_norm(loss_gauss_ce, model)
-                grad_w1 = grad_norm(loss_w1, model)
-                grad_entropy_penalty = grad_norm(loss_entropy_penalty, model)
-                grad_loss = grad_norm(loss, model)
+                # grad_gauss_ce = grad_norm(loss_gauss_ce, model)
+                # grad_w1 = grad_norm(loss_w1, model)
+                # grad_entropy_penalty = grad_norm(loss_entropy_penalty, model)
+                # grad_loss = grad_norm(loss, model)
                 #log gradient norms
-                writer.add_scalar('grad_norm/gauss_ce', grad_gauss_ce.item(), counter)
-                writer.add_scalar('grad_norm/w1', grad_w1.item(), counter)
-                writer.add_scalar('grad_norm/entropy_penalty', grad_entropy_penalty.item(), counter)
-                writer.flush()
+                # writer.add_scalar('grad_norm/gauss_ce', grad_gauss_ce.item(), counter)
+                # writer.add_scalar('grad_norm/w1', grad_w1.item(), counter)
+                # writer.add_scalar('grad_norm/entropy_penalty', grad_entropy_penalty.item(), counter)
+                # writer.flush()
 
             batch_iterator.set_postfix({
             "loss": f"{loss.item():6.2f}",
+            "loss_kl": f"{loss_kl.item():6.2f}",
             "gauss_ce": f"{loss_gauss_ce.item():6.2f}",
             "w1": f"{loss_w1.item():6.2f}",
             "entropy_pen": f"{loss_entropy_penalty.item():6.2f}",
-            "loss_curv": f"{loss_curv.item():6.2f}",
-            "target_std": f"{std:6.2f}",
-            "grad_loss": f"{grad_loss.item():6.2f}",
-            "gradd_gauss_ce": f"{grad_gauss_ce.item():6.2f}",
-            "grad_w1": f"{grad_w1.item():6.2f}"
+            # "loss_curv": f"{loss_curv.item():6.2f}",
+            # "target_std": f"{std:6.2f}",
+            # "grad_loss": f"{grad_loss.item():6.2f}",
+            # "gradd_gauss_ce": f"{grad_gauss_ce.item():6.2f}",
+            # "grad_w1": f"{grad_w1.item():6.2f}"
             # "grad_entropy_pen": f"{grad_entropy_penalty.item():6.2f}"
             })
 
@@ -360,7 +390,8 @@ def train_model_TimeSeries_paper(config):
             df.loc[:,f"noise"] = (noise_copy).detach().cpu().numpy()                                                #index form
             df.loc[:,f"noise_removed"] = (noise_removed_copy).detach().cpu().numpy()                                #index form
             df.loc[:,f"groundTruth"] = ((decoder_input_copy*div_term_copy)+min_value_copy).detach().cpu().numpy()   #float form
-            df.loc[:,f"prediction"] = (proj_output_copy).detach().cpu().numpy()                                     #index form
+            df.loc[:,f"prediction_mu"] = (proj_output_copy_mu).detach().cpu().numpy()                                     #index form
+            df.loc[:,f"prediction_std"] = (proj_output_copy_std).detach().cpu().numpy()                                     #index form
             df.loc[0,f"min_value"] = (min_value_copy).detach().cpu().numpy()                                        #float form
             df.loc[0,f"div_term"] = (div_term_copy).detach().cpu().numpy()                                          #float form
             df.loc[0,f"noise_std"] = (noise_std_copy).detach().cpu().numpy()                                        #float form

@@ -316,12 +316,12 @@ class Decoder(nn.Module):
         return self.norm(x)
     
 class ProjectionsLayer(nn.Module):
-    def __init__(self, d_model: int, vocab_size: int) -> None:
+    def __init__(self, d_model: int) -> None:
         super().__init__()
-        self.proj = nn.Linear(d_model, vocab_size)
+        self.proj = nn.Linear(d_model, 2)
     
     def forward(self,x):
-        #(batch,seq_len, d_model) --> (batch, seq_len, vocab_size)
+        #(batch,seq_len, d_model) --> (batch, seq_len, 2) ; 2 = mu, std
         return self.proj(x)
 
 class Transformer_Encoder_Interpolation_CE(nn.Module):
@@ -343,7 +343,7 @@ class Transformer_Encoder_Interpolation_CE(nn.Module):
         
 
 #model for interpolation with encoder and index input values; projection Layer projects output to index probability distribution
-def build_encoder_interpolation_uknToken_projection(vocab_size_src:int, vocab_size_tgt:int,src_seq_len: int, d_model: int = 512, N: int = 6, h: int = 8, dropout: float = 0.1, d_ff: int = 2024)-> Transformer_Encoder_Interpolation_CE:
+def build_encoder_interpolation_uknToken_projection(vocab_size_src:int,src_seq_len: int, d_model: int = 512, N: int = 6, h: int = 8, dropout: float = 0.1, d_ff: int = 2024)-> Transformer_Encoder_Interpolation_CE:
     src_embed = InputEmbedding(d_model, vocab_size_src)
     # src_embed = InputEmbedding_seperate(d_model, vocab_size, n_freqs=16)
     # src_embed = InputEmbedding_seperate2(d_model, vocab_size, n_freqs=16)
@@ -361,7 +361,7 @@ def build_encoder_interpolation_uknToken_projection(vocab_size_src:int, vocab_si
     
     encoder = Encoder(nn.ModuleList(encoder_blocks))
 
-    projection_layer = ProjectionsLayer(d_model, vocab_size_tgt)
+    projection_layer = ProjectionsLayer(d_model)
 
     transformer = Transformer_Encoder_Interpolation_CE(encoder, src_embed, src_pos, projection_layer)
 
