@@ -29,6 +29,7 @@ def get_config():
         "loss_w1": 1e-4,                           #weighting factor for soft-argmax loss
         "loss_entropy_penalty": 1e-2,                          #weighting factor for entropy penalty loss
         "loss_curv": 1e-3,                          #weighting factor for curvature loss
+        "loss_kl": 1e-2,
         "groundtruth_std": 10
     }
 

@@ -298,7 +298,7 @@ def train_model_TimeSeries_paper(config):
 
 
             #wasserstein loss #(B,L,V)
-            # loss_w1 = wasserstein1_cdf_loss(prediction_prob, groundTruth_prob, reduction="mean")
+            loss_w1 = wasserstein1_cdf_loss(prediction_prob, groundTruth_prob, reduction="mean")
             
 
 
@@ -332,7 +332,7 @@ def train_model_TimeSeries_paper(config):
             #         loss_entropy_penalty_weight += (1-config["loss_entropy_penalty"]) / ((train_count // batch_size) * (80))
 
             #total loss
-            loss = loss_gauss_ce + loss_kl
+            loss = loss_gauss_ce + config["loss_kl"] * loss_kl + config["loss_w1"] * loss_w1
             # start_epochs = 15
             # middle_epoch = 30
             # if(epoch < start_epochs):
