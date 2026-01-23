@@ -350,6 +350,7 @@ def train_model_TimeSeries_paper(config):
             #log the loss values
             writer.add_scalar('loss/total_loss', loss.item(), counter)
             writer.add_scalar('loss/kl_loss', loss_kl.item(), counter)
+            writer.add_scalar('loss/ce_loss', loss_gauss_ce.item(), counter)
             # writer.add_scalar('loss/gauss_ce_loss', loss_gauss_ce.item(), counter)
             # writer.add_scalar('loss/w1', loss_w1.item(), counter)
             # writer.add_scalar('loss/loss_entropy_penalty', loss_entropy_penalty.item(), counter)
@@ -368,7 +369,9 @@ def train_model_TimeSeries_paper(config):
 
             batch_iterator.set_postfix({
             "loss": f"{loss.item():6.2f}",
+            "loss_ce": f"{loss_gauss_ce.item():6.2f}",
             "loss_kl": f"{loss_kl.item():6.2f}",
+            "mean_pred_std": f"{torch.mean(prediction_std).item():6.2f}",
             # "gauss_ce": f"{loss_gauss_ce.item():6.2f}",
             # "w1": f"{loss_w1.item():6.2f}",
             # "entropy_pen": f"{loss_entropy_penalty.item():6.2f}",
