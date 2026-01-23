@@ -277,8 +277,8 @@ def train_model_TimeSeries_paper(config):
             # std = (std * std_factor)
             # groundTruth_extended = groundTruth * torch.ones(1, config["vocab_size"]+1, device=device).float()
             # groundTruth_prob =  1/(std*np.sqrt(2*np.pi)) * torch.exp(-0.5 * ((tokens - groundTruth_extended) / (std)) ** 2)
-            # log_p = torch.log(prediction_prob + 1e-8)
-            # loss_gauss_ce = -(groundTruth_prob * log_p).sum(dim=-1).mean()
+            log_p = torch.log(prediction_prob + 1e-8)
+            loss_gauss_ce = -(groundTruth_prob * log_p).sum(dim=-1).mean()
             # std = (max(10, std.item()))
 
             #gaussian distribution around the groundtruth token
@@ -332,7 +332,7 @@ def train_model_TimeSeries_paper(config):
             #         loss_entropy_penalty_weight += (1-config["loss_entropy_penalty"]) / ((train_count // batch_size) * (80))
 
             #total loss
-            loss = loss_kl
+            loss = loss_gauss_ce + loss_kl
             # start_epochs = 15
             # middle_epoch = 30
             # if(epoch < start_epochs):
