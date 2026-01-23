@@ -18,7 +18,7 @@ def get_config():
         "offset": 10,                                       #offset to the lowest and highest border of y_values
         "width_array_encoder": [10,100,10],                  #[min_width, max_width, max_count_width]
         "batch_size": 10,                                    #train_count / batch_size = number_iteration_per_epoch
-        "num_epochs": 400,                                  #max number of training epochs
+        "num_epochs": 40000,                                  #max number of training epochs
         "lr": 1e-3,                                       #learning rate for Adam optimizer
         "d_model": 512,
         "model_folder": "weights",                          #folder name to store models in
